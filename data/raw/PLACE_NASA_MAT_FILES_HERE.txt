@@ -1,0 +1,15 @@
+Place NASA PCoE Li-ion battery .mat files here, e.g.:
+    B0005.mat
+    B0006.mat
+    B0007.mat
+    B0018.mat
+
+Download from:
+    https://www.nasa.gov/intelligent-systems-division/discovery-and-systems-health/pcoe/pcoe-data-set-repository/
+    (Dataset #5: "Battery Data Set")
+or mirror:
+    https://data.nasa.gov/dataset/li-ion-battery-aging-datasets
+
+Once a file is placed here, simply run:
+    python main.py
+It will be detected and used automatically instead of the synthetic fallback data.
