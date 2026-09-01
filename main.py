@@ -39,7 +39,6 @@ Choose a NASA battery when several .mat files are present:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 
@@ -57,10 +56,9 @@ SRC_DIR = os.path.join(
     "src",
 )
 
-PREDICTIONS_DIR = os.path.join(
+OUTPUTS_DIR = os.path.join(
     PROJECT_ROOT,
     "outputs",
-    "predictions",
 )
 
 # Allow imports from src/
@@ -133,7 +131,6 @@ def parse_arguments() -> argparse.Namespace:
         "--battery",
         type=str,
         default="B0005",
-        choices=["B0005", "B0006", "B0007", "B0018"],
         help=(
             "Preferred NASA battery ID when multiple NASA .mat files "
             "are present. Default: B0005."
@@ -203,6 +200,24 @@ def get_battery_id(
 
     return str(values.iloc[0])
 
+def sanitize_run_id(value: str) -> str:
+    """
+    Convert a battery/dataset identifier into a safe directory name.
+    """
+    value = str(value).strip()
+
+    if not value:
+        return "BATTERY"
+
+    safe = "".join(
+        character
+        if character.isalnum() or character in ("-", "_")
+        else "_"
+        for character in value
+    )
+
+    return safe.strip("_") or "BATTERY"
+
 
 # ---------------------------------------------------------------------------
 # Main pipeline
@@ -261,6 +276,49 @@ def main():
             else args.battery
         ),
     )
+    run_id = sanitize_run_id(
+    battery_id
+    )
+
+    RUN_OUTPUT_DIR = os.path.join(
+        OUTPUTS_DIR,
+        run_id,
+    )
+
+    FIGURES_DIR = os.path.join(
+        RUN_OUTPUT_DIR,
+        "figures",
+    )
+
+    PREDICTIONS_DIR = os.path.join(
+        RUN_OUTPUT_DIR,
+        "predictions",
+    )
+
+    METRICS_DIR = os.path.join(
+        RUN_OUTPUT_DIR,
+        "metrics",
+    )
+
+    os.makedirs(
+        FIGURES_DIR,
+        exist_ok=True,
+    )
+
+    os.makedirs(
+        PREDICTIONS_DIR,
+        exist_ok=True,
+    )
+
+    os.makedirs(
+        METRICS_DIR,
+        exist_ok=True,
+    )
+
+    print(
+        f"[main] Output directory: {RUN_OUTPUT_DIR}"
+    )
+    
 
     # ---------------------------------------------------------------
     # Step 2: Preprocess and calculate/preserve SoH
@@ -271,6 +329,7 @@ def main():
             raw_df,
             data_source,
             battery_id,
+            filename=f"{run_id}_processed.csv",
         )
     except Exception as exc:
         print("\n[main] ERROR during preprocessing:")
@@ -610,6 +669,8 @@ def main():
             forecast_df,
             data_source,
             battery_id,
+            forecast_target_cycle=args.forecast_to,
+            output_dir=FIGURES_DIR,
         )
 
         plot_actual_vs_predicted(
@@ -617,6 +678,8 @@ def main():
             y_pred_test,
             test_df["cycle"].values,
             filename="actual_vs_predicted_future.png",
+            title="Actual vs Predicted SoH — Early-Life → Future-Cycle Prediction",
+            output_dir=FIGURES_DIR,
         )
 
         plot_actual_vs_predicted(
@@ -624,6 +687,8 @@ def main():
             y_pred_interp,
             test_df_i["cycle"].values,
             filename="actual_vs_predicted_interpolation.png",
+            title="Actual vs Predicted SoH — Random Interpolation Benchmark",
+            output_dir=FIGURES_DIR,
         )
 
         plot_residuals(
@@ -631,6 +696,7 @@ def main():
             y_pred_test,
             test_df["cycle"].values,
             filename="prediction_residuals_future.png",
+            output_dir=FIGURES_DIR,
         )
 
     except Exception as exc:
@@ -715,7 +781,7 @@ def main():
 
     extrap_pred_path = os.path.join(
         PREDICTIONS_DIR,
-        "early_to_future_extrapolation_predictions.csv",
+        "early_to_future_predictions.csv",
     )
 
     extrapolation_predictions_df.to_csv(
@@ -739,9 +805,13 @@ def main():
             "forecast_beyond_measured_data"
         )
 
+        forecast_filename = (
+            f"forecast_{args.forecast_to}_cycles.csv"
+        )
+
         forecast_path = os.path.join(
             PREDICTIONS_DIR,
-            "forecast_3000_cycles.csv",
+            forecast_filename,
         )
 
         forecast_out.to_csv(
@@ -789,7 +859,7 @@ def main():
             args.forecast_to
         ),
         "forecast_method": (
-            "bounded empirical degradation forecast"
+            "empirical linear + exponential degradation forecast"
         ),
         "features_used": feature_cols,
         "model": "RandomForestRegressor",
@@ -800,6 +870,7 @@ def main():
         save_metrics(
             metrics,
             extra_info,
+            METRICS_DIR,
         )
 
     except Exception as exc:
@@ -827,19 +898,19 @@ def main():
     )
 
     print(
-        "#   outputs/figures/      -> degradation + prediction/error plots"
+        f"#   {RUN_OUTPUT_DIR}\\figures\\      -> degradation + prediction/error plots"
     )
 
     print(
-        "#   outputs/predictions/  -> test set + forecast CSVs"
+        f"#   {RUN_OUTPUT_DIR}\\predictions\\  -> test set + forecast CSVs"
     )
 
     print(
-        "#   outputs/metrics/      -> metrics.json"
+        f"#   {RUN_OUTPUT_DIR}\\metrics\\      -> metrics.json"
     )
 
     print(
-        "#   data/processed/       -> processed_battery_data.csv"
+        "#   data/processed/       -> dataset-specific processed CSV"
     )
 
     print(

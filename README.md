@@ -1,263 +1,679 @@
-# Lithium-Ion Battery State of Health (SoH) Prediction Using Machine Learning Based on Charge Cycle Data
+# Lithium-Ion Battery State of Health (SoH) Prediction Using Machine Learning
 
-## 1. Project Title
-Lithium-Ion Battery State of Health (SoH) Prediction Using Machine Learning Based on Charge Cycle Data
+A reusable machine-learning pipeline for predicting the **State of Health (SoH)** of lithium-ion batteries from early-life operating-cycle data.
+
+The main objective is to determine whether battery health can be estimated from data collected during the early portion of a battery's lifetime, rather than waiting for the complete degradation history.
+
+**The project supports:**
+
+- NASA PCoE Li-ion battery `.mat` datasets
+- Generic battery `.csv` datasets
+- Multiple battery IDs without changing the code
+- Capacity-based or directly supplied SoH
+- Chronological early-life → future-cycle evaluation
+- Random interpolation benchmarking
+- Random Forest regression
+- MAE, RMSE, and R² evaluation
+- Long-term empirical degradation extrapolation
+- Dataset-specific output folders
+- Configurable training and forecast horizons
+
+---
+
+## Table of Contents
+
+1. [Problem Statement](#1-problem-statement)
+2. [Objective](#2-objective)
+3. [Proposed Solution](#3-proposed-solution)
+4. [Dataset](#4-dataset)
+5. [SoH Definition](#5-soh-definition)
+6. [Features Used](#6-features-used)
+7. [Machine Learning Model](#7-machine-learning-model)
+8. [Training and Evaluation Strategy](#8-training-and-evaluation-strategy)
+9. [Evaluation Metrics](#9-evaluation-metrics)
+10. [Long-Term Degradation Forecast](#10-long-term-degradation-forecast)
+11. [End-of-Life Threshold](#11-end-of-life-threshold)
+12. [Verified NASA B0005 Results](#12-verified-nasa-b0005-results)
+13. [3000-Cycle Forecast Interpretation](#13-3000-cycle-forecast-interpretation)
+14. [Project Structure](#14-project-structure)
+15. [Running the Project](#15-running-the-project)
+16. [Running a Specific Dataset](#16-running-a-specific-dataset)
+17. [Output Files](#17-output-files)
+18. [Data Integrity and Honesty](#18-data-integrity-and-honesty)
+19. [Important Limitations](#19-important-limitations)
+20. [Key Project Finding](#20-key-project-finding)
+21. [Conclusion](#21-conclusion)
+
+---
+
+## 1. Problem Statement
+
+Lithium-ion batteries gradually lose usable capacity as they undergo repeated charge/discharge cycles. This degradation reduces the battery's State of Health (SoH) and eventually limits its useful operating life.
+
+The problem addressed by this project is:
+
+> **Can the future State of Health of a lithium-ion battery be predicted using only early-life battery operating data, without observing the battery for its entire lifetime?**
+
+This is relevant to applications such as:
+
+- Battery Management Systems (BMS)
+- Electric vehicles
+- Energy storage systems
+- Portable electronics
+- Predictive maintenance
+
+The project therefore focuses on **early-life prediction of future battery degradation**.
+
+---
 
 ## 2. Objective
-To model and predict how the health of a lithium-ion 18650 cell degrades as
-the number of charge/discharge cycles increases, using measured cycling
-data and a machine learning regression model, and to forecast the
-degradation trend forward to 3000 cycles.
 
-## 3. Problem Statement
-Lithium-ion batteries lose usable capacity every time they are charged and
-discharged. This capacity loss (aging/degradation) determines the
-remaining useful life of the battery. Being able to predict State of
-Health (SoH) from early-cycle behaviour is valuable for battery management
-systems (BMS), EVs, and portable electronics, because it allows
-maintenance/replacement to be planned before failure.
+The project has three main objectives:
+
+1. Calculate battery State of Health from measured battery capacity when required.
+2. Train a machine-learning regression model using early-cycle battery operation data.
+3. Evaluate the model on later, unseen cycles, and provide a separate long-term degradation extrapolation toward a configurable cycle horizon (3000 cycles by default).
+
+The distinction between **future-cycle prediction** and **long-term extrapolation** is important and is maintained throughout the project.
+
+---
+
+## 3. Proposed Solution
+
+```text
+Battery Dataset
+       │
+       ▼
+Data Loading
+       │
+       ├── NASA .mat
+       └── Generic .csv
+       │
+       ▼
+Dataset Validation / Standardization
+       │
+       ▼
+Preprocessing
+       │
+       ├── Cleaning
+       └── SoH calculation / preservation
+       │
+       ▼
+Feature Engineering
+       │
+       ├── Voltage features
+       ├── Current features
+       ├── Temperature features
+       └── Derived features
+       │
+       ▼
+Chronological Train/Test Split
+       │
+       ├── Early-life cycles → Training
+       └── Later cycles → Testing
+       │
+       ▼
+Random Forest Regressor
+       │
+       ▼
+Future-Cycle SoH Prediction
+       │
+       ▼
+MAE / RMSE / R²
+       │
+       ▼
+Separate Long-Term Empirical Forecast
+       │
+       ▼
+Plots + CSV + Metrics
+```
+
+---
 
 ## 4. Dataset
 
-**Primary (preferred) dataset:** NASA Prognostics Center of Excellence
-(PCoE) Li-ion Battery Aging Dataset — batteries `B0005`, `B0006`, `B0007`,
-`B0018` (18650 cells, repeatedly charged/discharged at 24°C until
-significant capacity fade).
+### Primary Dataset
+
+The project is designed to work with the **NASA Prognostics Center of Excellence (PCoE) Li-ion Battery Aging Dataset**.
+
+Example batteries include: `B0005`, `B0006`, `B0007`, `B0018`.
+
+The original NASA dataset contains battery cycling measurements including voltage, current, temperature, and discharge capacity information.
+
+**NASA sources:**
 - https://www.nasa.gov/intelligent-systems-division/discovery-and-systems-health/pcoe/pcoe-data-set-repository/
-- Mirror: https://data.nasa.gov/dataset/li-ion-battery-aging-datasets
+- https://data.nasa.gov/dataset/li-ion-battery-aging-datasets
 
-**How to add it:** download `B0005.mat` (or `B0006.mat` / `B0007.mat` /
-`B0018.mat`) and place it directly inside `data/raw/`. The program
-(`main.py`) automatically detects and loads it — no code changes needed.
+### Adding NASA Data
 
-**Fallback dataset (used automatically if no `.mat` file is present):**
-a synthetic degradation dataset generated from a standard two-stage
-Li-ion capacity-fade model (linear fade + accelerating "knee"), with
-realistic sensor noise added. This exists **only** so the pipeline can be
-demonstrated end-to-end before the real NASA files are downloaded.
-
-**This run's dataset is always clearly recorded** in every output file
-(`data_source` column/field = `NASA_PCoE_MEASURED` or
-`SYNTHETIC_FALLBACK_NOT_REAL`) so it is never ambiguous which one was used.
-Check `outputs/metrics/metrics.json` → `"is_synthetic_data"` before citing
-results anywhere.
-
-> **Battery chemistry note:** the NASA PCoE documentation for these cells
-> does not explicitly publish a specific NMC/LFP chemistry designation for
-> every cell in a way this project can verify automatically, so this
-> project does **not** claim a specific chemistry unless you have checked
-> the official NASA documentation for the exact cell used and can confirm
-> it yourself for your report.
-
-## 5. Battery SoH Definition
-
-State of Health is defined using the standard formula:
+Place the downloaded `.mat` files inside `data/raw/`:
 
 ```
-SoH(n) = ( Capacity(n) / Capacity_initial ) × 100
+data/raw/B0005.mat
+data/raw/B0006.mat
 ```
 
-`Capacity_initial` is the discharge capacity measured at the **first
-valid cycle** in the dataset (cycle 1), used as the reference/baseline
-capacity — the conventional choice when a separate manufacturer
-nameplate capacity is not provided in the raw data.
+The program automatically searches `data/raw/` for supported NASA `.mat` files and selects the preferred battery when requested. A specific input can also be supplied:
+
+```bash
+python main.py --input data/raw/B0005.mat
+```
+
+### Generic CSV Support
+
+The pipeline also accepts generic battery CSV datasets:
+
+```bash
+python main.py --input data/raw/battery.csv
+```
+
+The loader standardizes common alternative column names into the project's internal schema. Typical information includes:
+
+- `cycle`
+- `capacity`
+- `voltage`
+- `current`
+- `temperature`
+
+(or equivalent aliases). A dataset may also provide SoH directly, in which case capacity-based SoH calculation is not required.
+
+---
+
+## 5. SoH Definition
+
+When capacity is available, State of Health is calculated as:
+
+```
+SoH(n) = (Capacity(n) / Capacity_initial) × 100
+```
+
+where:
+- `Capacity(n)` = measured discharge capacity at cycle `n`
+- `Capacity_initial` = capacity at the earliest valid measured cycle
+
+Therefore:
+- Initial valid cycle → approximately 100% SoH
+- Later cycles → decreasing SoH as capacity decreases
+
+The project uses the first valid measured capacity as the reference, because a separate manufacturer nameplate capacity is not supplied as an independent reference in the project data pipeline.
+
+---
 
 ## 6. Features Used
 
-Only features that actually exist in the loaded dataset are used — nothing
-is fabricated. From the NASA `.mat` files (or the equivalently-structured
-synthetic fallback), the following per-cycle features are extracted:
+The current feature pipeline uses cycle-level voltage, current, and temperature statistics.
 
 | Feature | Description |
 |---|---|
 | `cycle` | Charge/discharge cycle number |
-| `voltage_mean/min/max` | Statistics of measured terminal voltage during discharge |
-| `current_mean/min` | Statistics of measured discharge current |
-| `temperature_mean/max` | Statistics of measured cell temperature during discharge |
-| `voltage_range` | derived: voltage_max − voltage_min |
-| `temperature_rise` | derived: temperature_max − temperature_mean |
+| `voltage_mean` | Mean measured discharge voltage |
+| `voltage_min` | Minimum measured discharge voltage |
+| `voltage_max` | Maximum measured discharge voltage |
+| `current_mean` | Mean measured discharge current |
+| `current_min` | Minimum measured discharge current |
+| `temperature_mean` | Mean measured temperature |
+| `temperature_max` | Maximum measured temperature |
+| `voltage_range` | `voltage_max − voltage_min` |
+| `temperature_rise` | `temperature_max − temperature_mean` |
 
-Internal resistance/impedance is **not** used as a feature because the
-`.mat` discharge-cycle records used here do not reliably provide a single
-per-cycle impedance value in a form comparable across all four batteries;
-if you specifically need it, NASA also provides separate `impedance`-type
-cycle records that could be parsed as a future extension.
+**Target variable:** `soh` (measured in percent)
 
-**Target:** `soh` (%)
+### Internal Resistance
 
-## 7. ML Methodology
+Internal resistance/impedance is **not** currently used as a primary ML feature, because the discharge records used by the current pipeline do not provide one consistently comparable per-cycle impedance value across datasets. The architecture can be extended later to incorporate impedance information.
 
-**Model: Random Forest Regressor** (scikit-learn).
+---
 
-Why Random Forest, and not deep learning:
-- SoH-vs-cycle is a smooth, mostly monotonic tabular regression problem
-  with a modest number of features and samples — not enough data to
-  justify a neural network.
-- Random Forest handles the non-linear (linear-fade + "knee")
-  degradation shape well, needs no feature scaling, and is robust to
-  per-cycle measurement noise.
-- It trains in seconds and is easy to explain in a viva (an ensemble of
-  decision trees, each trained on a random subset of data/features, with
-  predictions averaged).
+## 7. Machine Learning Model
 
-## 8. Train/Test Strategy — Two Complementary Evaluations
+### Random Forest Regressor
 
-This project reports **two** honest evaluations, because they answer
-different questions:
+The primary machine-learning model is `RandomForestRegressor` from scikit-learn.
 
-**(A) Early-cycle → future-cycle extrapolation split** (matches the
-project notes: *"feed ~1500 cycles → predict future cycles"*)
-- Train ONLY on early cycles (up to cycle 1500, or 70% of available
-  cycles if the dataset has fewer than 1500 — the program prints exactly
-  which was used and why).
-- Test on the later, never-seen-during-training cycles.
-- **Important, honestly reported limitation:** tree-based models such as
-  Random Forest cannot extrapolate beyond the numeric range of `cycle`
-  (and correlated sensor values) seen during training — they can only
-  interpolate. So this split's accuracy is expected to be poor, and this
-  is a genuine, well-documented property of tree ensembles, not a bug.
-  This is exactly *why* Step 7 (3000-cycle forecast) does NOT use the
-  Random Forest — it uses a bounded empirical degradation curve fit instead (see
-  Section 10 below).
-
-**(B) Random (interpolation) split** — 75% train / 25% test, cycles
-shuffled randomly across the whole measured range.
-- This is the setting Random Forest is genuinely well-suited to, and is
-  reported as the **primary MAE/R² result** for the project, because it
-  fairly reflects the model's ability to predict SoH from sensor +
-  cycle-count features.
-
-Both sets of metrics are saved in `outputs/metrics/metrics.json`.
-
-## 9. MAE (Mean Absolute Error)
+The current configuration uses:
 
 ```
-MAE = mean( | Actual SoH − Predicted SoH | )
+n_estimators     = 300
+max_depth        = 10
+min_samples_leaf = 2
 ```
 
-MAE is the primary evaluation metric required for this project because it
-is directly interpretable in the same units as SoH (percent) — an MAE of,
-say, 0.2% means the model's SoH predictions are, on average, within 0.2
-percentage points of the true measured SoH.
+### Why Random Forest?
 
-## 10. 3000-Cycle Forecast Methodology
+Random Forest was selected because this project is fundamentally a tabular regression problem with a relatively small number of engineered features.
 
-Because Random Forest cannot extrapolate past its training range, the
-3000-cycle forecast is produced differently and clearly separately:
+**Advantages:**
+- Handles nonlinear relationships
+- Does not require feature scaling
+- Robust to measurement noise
+- Works well with mixed feature relationships
+- Fast to train for this dataset size
+- Straightforward to explain during a viva
 
-1. A standard two-stage Li-ion degradation curve is fit to the **entire
-   measured SoH-vs-cycle history** using non-linear least squares
-   (`scipy.optimize.curve_fit`):
-   `SoH(n) = C0 * (1 − a·n − b·(1 − e^(−n/τ)))`
-   (slow linear fade + an accelerating exponential "knee" — the standard
-   shape reported across Li-ion aging literature).
-2. This fitted curve is extended out to cycle 3000.
-3. The forecast is forced to be non-increasing (physically required for
-   SoH) and anchored to the last real measured SoH value.
+It is also preferable to introducing a deep neural network without sufficient training data or a demonstrated need for deep learning.
 
-**On every plot and in every CSV, this forecast region is explicitly
-labeled "Forecast / Predicted"** and is visually and numerically
-distinguished from the "Measured" region. The project never claims the
-battery was experimentally tested for 3000 cycles.
+---
 
-## 11. Results
+## 8. Training and Evaluation Strategy
 
-Results depend on which dataset was actually used for the run — always
-check `outputs/metrics/metrics.json` (`is_synthetic_data`) before quoting
-numbers. A results summary is printed to the console at the end of every
-run, and also saved as JSON. Example structure of what's reported:
+The project deliberately performs two different evaluations. They answer different questions.
+
+### A. Early-Life → Future-Cycle Prediction (Primary Evaluation)
+
+The data is split **chronologically**:
 
 ```
-Primary (interpolation-split) results:
-  MAE  : X.XX %
-  R²   : X.XXXX
-  RMSE : X.XX %
-
-Early-cycle -> future-cycle extrapolation results (documented limitation):
-  MAE  : X.XX %
-  R²   : X.XXXX
+Early cycles
+    │
+    ├── Training
+    │
+    ▼
+Random Forest
+    │
+    ▼
+Later unseen cycles
+    │
+    └── Testing
 ```
 
-## 12. Limitations
+The model is trained only on early-life data and evaluated on later cycles that were not present in the training set.
 
-- Random Forest (and tree ensembles in general) cannot extrapolate beyond
-  the cycle-number range they were trained on — this is why 3000-cycle
-  forecasting uses a separate curve-fit method, not the ML model directly.
-- If real NASA data was not downloaded before running, results are based
-  on synthetic fallback data and **do not represent real battery
-  behaviour** — they only demonstrate that the pipeline works correctly.
-  This is clearly labeled everywhere (`SYNTHETIC_FALLBACK_NOT_REAL`).
-- Internal resistance/impedance was not used, since it isn't reliably
-  available per-discharge-cycle in the parsed `.mat` structure used here.
-- The synthetic fallback's specific fade-rate constants are illustrative,
-  not derived from a specific real cell's datasheet.
-- SoH here is computed relative to the first measured cycle's capacity,
-  not the manufacturer's nameplate rated capacity (which NASA's raw data
-  does not separately specify).
+The default training target is **1500 cycles**. However, if a dataset contains fewer than 1500 cycles, the pipeline automatically adapts.
 
-## 13. Project Structure
+For example, NASA B0005 contains only 168 measured cycles, so the pipeline uses:
+
+```
+Training: cycles 1–117
+Testing:  cycles 118–168
+```
+
+This is approximately a 70% / 30% split. The adaptation is printed explicitly by the program.
+
+**Why this evaluation matters:** this is the experiment most closely related to the actual project objective — using early-life data to estimate future battery health. The test cycles are genuine later measured cycles, so predictions can be compared against real ground truth.
+
+### B. Random Interpolation Benchmark (Secondary Evaluation)
+
+A second 75/25 random split is also performed, where cycles are randomly distributed between training and testing:
+
+```
+Measured cycle range
+       │
+       ├── Random 75% → Training
+       │
+       └── Random 25% → Testing
+```
+
+This is an interpolation task rather than a true future-extrapolation task. It is included because Random Forest is generally much better suited to predicting values within the feature range represented during training.
+
+> **Note:** "Early → Future" and "Random Interpolation" must not be interpreted as the same experiment. The chronological early-life → future-cycle result is the **primary** project evaluation. The random interpolation result is a **secondary** benchmark.
+
+---
+
+## 9. Evaluation Metrics
+
+The main metric required by the project is **Mean Absolute Error (MAE)**:
+
+```
+MAE = mean(|Actual SoH − Predicted SoH|)
+```
+
+For example, `MAE = 2.0%` means the predictions differ from the measured SoH by an average of approximately 2 percentage points. MAE is useful because it is directly expressed in the same unit as the target (SoH, %).
+
+**Additional metrics reported by the pipeline:**
+
+| Metric | Description |
+|---|---|
+| **R²** | Measures how well the predictions explain the variance of the target |
+| **RMSE** | Penalizes larger prediction errors more strongly than MAE |
+
+All three metrics are generated by the pipeline and saved in the output metrics file.
+
+---
+
+## 10. Long-Term Degradation Forecast
+
+A separate long-term degradation forecast is generated after the ML evaluation.
+
+### Why Isn't Random Forest Used for 3000-Cycle Extrapolation?
+
+Random Forest is excellent at interpolation but is not a reliable mathematical extrapolator outside the feature range represented during training. For example, in the B0005 experiment, training cycles span 1–117 — a Random Forest should not be expected to reliably infer behavior thousands of cycles beyond this range.
+
+Therefore, the project intentionally separates **machine-learning prediction** from **long-term empirical extrapolation**.
+
+### Forecast Model
+
+The long-term trend uses an empirical linear + exponential degradation model:
+
+```
+SoH(n) = 100 − a(n − 1) − b(1 − exp(−(n − 1)/τ))
+```
+
+where:
+- `n` = cycle number
+- `a` = approximately linear degradation component
+- `b` = nonlinear degradation component
+- `τ` = characteristic cycle scale of the nonlinear term
+
+The parameters are fitted to the measured SoH trajectory using nonlinear least squares. The forecast is then extended from the final measured cycle to the requested forecast horizon.
+
+### Important Interpretation
+
+This forecast is **model-based extrapolation**, and not **experimentally measured data**.
+
+For NASA B0005, the current dataset contains 168 measured discharge cycles. Cycles after 168 are extrapolated rather than experimentally observed. The program explicitly reports this limitation.
+
+---
+
+## 11. End-of-Life Threshold
+
+The project uses **80% SoH** as the End-of-Life (EOL) reference threshold. The pipeline checks whether the measured battery trajectory reaches this threshold.
+
+For the current NASA B0005 run: **80% EOL ≈ cycle 101**.
+
+This means the battery had already dropped below 80% SoH before the measured experiment ended at cycle 168.
+
+---
+
+## 12. Verified NASA B0005 Results
+
+The current verified run uses:
+
+| Parameter | Value |
+|---|---|
+| Dataset | NASA PCoE |
+| Battery | B0005 |
+| Measured cycles | 168 |
+| Initial reference capacity | 1.8565 Ah |
+| Final measured SoH | 71.38% |
+
+### Primary Evaluation — Chronological Early-Life → Future-Cycle Prediction
+
+Training cycles: 1–117 · Testing cycles: 118–168
+
+| Metric | Value |
+|---|---|
+| MAE | 4.02% |
+| RMSE | 4.52% |
+| R² | −3.4805 |
+
+### Secondary Evaluation — Random Interpolation Benchmark
+
+| Metric | Value |
+|---|---|
+| MAE | 0.42% |
+| RMSE | 0.58% |
+| R² | 0.9968 |
+
+### Interpretation
+
+The two results demonstrate an important distinction. The model performs very well when predicting within the measured data distribution (random interpolation, MAE = 0.42%), but performance is substantially worse when trained only on early-life data and evaluated on later aging cycles (early → future, MAE = 4.02%).
+
+This demonstrates the difficulty of predicting future aging states from limited early-life observations using a standard tree-based regressor. The negative R² in the chronological evaluation is therefore **not hidden or replaced** with the interpolation result — both results are reported separately.
+
+---
+
+## 13. 3000-Cycle Forecast Interpretation
+
+The project can generate a forecast toward 3000 cycles, or another horizon supplied through the command line:
+
+```bash
+python main.py --forecast-to 3000
+```
+
+```bash
+python main.py --forecast-to 500
+```
+
+The 3000-cycle output should be interpreted as **an empirical long-term degradation extrapolation from the measured data**, not as a validated experimental measurement.
+
+For B0005 specifically:
+
+```
+Measured:     cycles 1–168
+Extrapolated: cycles 169–3000
+```
+
+The software explicitly warns when the requested horizon is far beyond the measured range.
+
+---
+
+## 14. Project Structure
 
 ```
 battery-soh-prediction/
+│
 ├── data/
-│   ├── raw/                 <- put NASA .mat file(s) here
-│   └── processed/           <- processed_battery_data.csv (auto-generated)
+│   ├── raw/
+│   │   ├── B0005.mat
+│   │   └── ...
+│   │
+│   └── processed/
+│       ├── B0005_processed.csv
+│       └── ...
+│
 ├── outputs/
-│   ├── figures/              <- 3 PNG plots (auto-generated)
-│   ├── predictions/          <- prediction CSVs (auto-generated)
-│   └── metrics/              <- metrics.json (auto-generated)
+│   ├── B0005/
+│   │   ├── figures/
+│   │   │   ├── soh_vs_cycles.png
+│   │   │   ├── actual_vs_predicted_future.png
+│   │   │   ├── actual_vs_predicted_interpolation.png
+│   │   │   └── prediction_residuals_future.png
+│   │   │
+│   │   ├── predictions/
+│   │   │   ├── test_set_predictions.csv
+│   │   │   ├── early_to_future_predictions.csv
+│   │   │   └── forecast_3000_cycles.csv
+│   │   │
+│   │   └── metrics/
+│   │       └── metrics.json
+│   │
+│   └── <another-battery-or-dataset>/
+│       ├── figures/
+│       ├── predictions/
+│       └── metrics/
+│
 ├── src/
-│   ├── data_loader.py         Loads NASA .mat data or synthetic fallback
-│   ├── preprocessing.py       Cleans data, computes SoH
-│   ├── feature_engineering.py Builds ML feature matrix
-│   ├── model.py                Random Forest + 3000-cycle curve-fit forecast
-│   ├── evaluation.py           MAE / R² / RMSE
-│   └── visualization.py        All 3 required plots
-├── main.py                    Runs the full pipeline
+│   ├── data_loader.py
+│   ├── preprocessing.py
+│   ├── feature_engineering.py
+│   ├── model.py
+│   ├── evaluation.py
+│   └── visualization.py
+│
+├── main.py
 ├── requirements.txt
-├── run.bat                    Windows one-click setup + run
+├── run.bat
+├── .gitignore
 └── README.md
 ```
 
-## 14. How to Run (Windows)
+### Module Responsibilities
 
-### Option A — one command
+| Module | Responsibility |
+|---|---|
+| `data_loader.py` | Loads NASA `.mat` battery data, generic CSV datasets, and synthetic fallback data when no real dataset is available. Converts inputs into a common internal representation. |
+| `preprocessing.py` | Cleans invalid records, computes SoH when capacity is provided, preserves directly supplied SoH, and saves processed data. |
+| `feature_engineering.py` | Builds the ML feature matrix from available battery measurements. |
+| `model.py` | Contains chronological train/test splitting, random interpolation splitting, Random Forest training, and long-term empirical degradation forecasting. |
+| `evaluation.py` | Calculates MAE, RMSE, and R², and writes metrics to JSON. |
+| `visualization.py` | Generates the SoH degradation curve, actual vs. predicted future-cycle graph, actual vs. predicted interpolation graph, and prediction residual analysis. |
+| `main.py` | Controls the complete end-to-end pipeline. |
+
+---
+
+## 15. Running the Project
+
+### Windows — One-Command Execution
+
+From the project root:
+
 ```cmd
 run.bat
 ```
-This creates a virtual environment, installs dependencies, and runs the
-pipeline automatically.
 
-### Option B — manual steps
+This:
+1. Creates the virtual environment if necessary.
+2. Installs dependencies.
+3. Runs the pipeline.
+
+### Manual Execution
+
 ```cmd
-cd battery-soh-prediction
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-
-REM (Optional but recommended) place a downloaded NASA .mat file, e.g.
-REM B0005.mat, into the data\raw\ folder now.
-
 python main.py
 ```
 
-### Outputs produced after running
-```
-data/processed/processed_battery_data.csv
-outputs/figures/soh_vs_cycles.png
-outputs/figures/actual_vs_predicted.png
-outputs/figures/prediction_residuals.png
-outputs/predictions/test_set_predictions.csv
-outputs/predictions/early_to_future_extrapolation_predictions.csv
-outputs/predictions/forecast_3000_cycles.csv
-outputs/metrics/metrics.json
+---
+
+## 16. Running a Specific Dataset
+
+**NASA B0005:**
+```bash
+python main.py --input data/raw/B0005.mat
 ```
 
+**Generic CSV:**
+```bash
+python main.py --input data/raw/battery.csv
+```
 
-## Important interpretation of the 3000-cycle forecast
+**Select a battery** (when multiple NASA `.mat` files are available):
+```bash
+python main.py --battery B0006
+```
 
-The NASA B0005 experiment contains 168 measured discharge cycles. The plot therefore shows measured NASA data only through the final observed cycle, followed by a dashed **model-based extrapolation** toward cycle 3000. The extrapolation uses a bounded stretched-exponential degradation curve:
+**Change the training cutoff** (default: 1500 cycles):
+```bash
+python main.py --train-until 200
+```
 
-\[ \mathrm{SoH}(n) = S_\mathrm{floor} + (100 - S_\mathrm{floor}) \exp\left(-\left(\frac{n}{\tau}\right)^p\right) \]
+**Change the forecast horizon** (default: 3000 cycles):
+```bash
+python main.py --forecast-to 1000
+```
 
-where `S_floor`, `tau`, and `p` are fitted from the measured SoH trajectory. The bounded form prevents the forecast from becoming negative or collapsing artificially to 0% simply because the curve was extrapolated far beyond the measured range. It is an empirical trend model, **not a first-principles electrochemical model and not a claim that B0005 was experimentally tested to 3000 cycles**.
+**Combine options:**
+```bash
+python main.py --input data/raw/B0005.mat --train-until 100 --forecast-to 1000
+```
+
+---
+
+## 17. Output Files
+
+Each dataset receives its own output directory — for example, `outputs/B0005/`.
+
+### Figures
+
+| File | Description |
+|---|---|
+| `soh_vs_cycles.png` | Measured battery degradation and the long-term empirical forecast |
+| `actual_vs_predicted_future.png` | Primary chronological early-life → future-cycle ML prediction |
+| `actual_vs_predicted_interpolation.png` | Secondary random interpolation benchmark |
+| `prediction_residuals_future.png` | Prediction residuals for the chronological future-cycle evaluation |
+
+### Prediction CSVs
+
+| File | Description |
+|---|---|
+| `test_set_predictions.csv` | Random interpolation predictions |
+| `early_to_future_predictions.csv` | Primary early-life → future-cycle predictions |
+| `forecast_<N>_cycles.csv` | Long-term empirical extrapolation toward the selected cycle horizon |
+
+The forecast filename automatically follows the selected horizon, e.g. `forecast_500_cycles.csv`, `forecast_1000_cycles.csv`.
+
+### Metrics
+
+`metrics.json` contains the primary metrics plus experiment metadata, including:
+- Battery ID
+- Dataset source
+- Measured cycle count
+- Training cutoff and actual split used
+- Forecast horizon
+- Feature list
+- Model name
+- Interpolation metrics
+- Early-to-future metrics
+
+---
+
+## 18. Data Integrity and Honesty
+
+The project distinguishes clearly between:
+
+- `NASA_PCoE_MEASURED`
+- `SYNTHETIC_FALLBACK_NOT_REAL`
+
+Synthetic data exists only as a fallback to demonstrate that the software pipeline can run when real measurements are unavailable. Synthetic output must **not** be presented as experimental NASA battery data. Before reporting results, always verify the dataset source recorded in the generated metrics.
+
+---
+
+## 19. Important Limitations
+
+- **Limited long-term measurement data** — NASA B0005 currently provides only 168 measured discharge cycles in this experiment. A forecast extending to 3000 cycles is therefore a long-range extrapolation.
+- **Random Forest extrapolation** — Random Forest is fundamentally better suited to interpolation within the distribution represented during training than to long-range extrapolation into unseen aging states. This is why the project separates ML prediction from empirical degradation extrapolation.
+- **Model uncertainty** — the project does not claim that the empirical 3000-cycle forecast is experimentally validated. The extrapolated trajectory should be interpreted as a modeled degradation scenario rather than a guaranteed battery lifetime prediction.
+- **SoH reference** — SoH is referenced to the earliest valid measured capacity rather than an independently supplied manufacturer nameplate capacity.
+- **Feature availability** — the pipeline uses only features that can actually be extracted from the supplied dataset. Datasets with different measurements may therefore produce a different final feature set.
+
+---
+
+## 20. Key Project Finding
+
+One of the most important findings from the current experiment is the difference between interpolation and genuine future prediction:
+
+```
+                    Random Forest
+
+             ┌──────────────────────┐
+             │  Measured-range      │
+             │  interpolation       │
+             │                      │
+             │  MAE = 0.42%         │
+             └──────────────────────┘
+                       │
+                       │
+                       ▼
+             ┌──────────────────────┐
+             │  Early-life →        │
+             │  future-cycle        │
+             │                      │
+             │  MAE = 4.02%         │
+             └──────────────────────┘
+```
+
+This demonstrates that predicting battery aging is more difficult than simply fitting the observed SoH curve. The result supports the central motivation of the project:
+
+> Early-life battery data contains information related to future health, but accurately predicting later aging states remains substantially more difficult than interpolation within the measured operating range.
+
+---
+
+## 21. Conclusion
+
+This project implements a complete, reusable battery SoH prediction pipeline. The system:
+
+- Loads real battery measurements.
+- Converts battery capacity into SoH when required.
+- Extracts voltage, current, and temperature features.
+- Trains a Random Forest regression model.
+- Evaluates the model on genuinely later, unseen cycles.
+- Provides a secondary interpolation benchmark.
+- Generates an empirical long-term degradation extrapolation.
+- Produces plots, prediction CSVs, and machine-readable metrics.
+- Separates results by battery/dataset to support repeated experiments.
+
+The primary experiment demonstrates the feasibility and limitations of predicting future battery health from early-life operational data.
+
+**For the verified NASA B0005 experiment:**
+
+| | |
+|---|---|
+| Measured cycles | 168 |
+| Final measured SoH | 71.38% |
+| 80% EOL | ≈ cycle 101 |
+| Early-life → future MAE / RMSE / R² | 4.02% / 4.52% / −3.4805 |
+| Random interpolation MAE / RMSE / R² | 0.42% / 0.58% / 0.9968 |
+
+The project therefore provides both a practical ML prediction pipeline and an explicit demonstration of the challenge of long-term battery degradation forecasting.
